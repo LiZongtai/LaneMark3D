@@ -7,6 +7,9 @@
 #include <glm\gtc\type_ptr.hpp>
 #include <stb_image.h>
 
+#include <chrono>
+#include <thread>
+
 #include "Shader.h"
 #include "LaneDetection/LaneDetectionModule.h"
 #include "LaneDetection/LaneMark.h"
@@ -22,16 +25,42 @@ const unsigned int SCR_HEIGHT = 720;
 
 unsigned int loadTexture(const char *path);
 
-//void laneDetectionThread(cv::Mat frame) {
-//    LaneDetectionModule lm;
-//    lm.detectLane(frame);
-//    std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds> tp = std::chrono::time_point_cast<std::chrono::milliseconds>(
-//            std::chrono::system_clock::now());
-//    auto tmp = std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch());
-//    std::time_t timestamp = tmp.count();
-//    std::thread::id tid = std::this_thread::get_id();
-//    std::cout << "f id=" << tid << ": " << timestamp << std::endl;
-//}
+float turnRightZpos = -50.0f;
+float turnRightXpos = 2.0f;
+bool turnAnimationEnd = false;
+
+void ThreadProc1() {
+    if (turnRightZpos < 20) {
+        turnRightZpos += 0.5f;
+    } else {
+        turnAnimationEnd = true;
+        turnRightZpos = -50.0f;
+    }
+    if (!turnAnimationEnd) {
+        if(turnRightXpos>0)
+            turnRightXpos -= 0.02f;
+    } else{
+        turnAnimationEnd = false;
+        turnRightXpos = 2.0f;
+    }
+
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void updateViewMatrixThread(LaneDetectionModule lm, LaneMark laneMark, glm::mat4 view) {
+    int lanePointNum = 10;
+    std::vector<cv::Point2f> newPoints = {};
+    newPoints.emplace_back(cv::Point2f(lm.pointsLeftX[lanePointNum - 2], lm.pointsLeftX[lanePointNum - 1]));
+    newPoints.emplace_back(cv::Point2f(lm.pointsRightX[lanePointNum - 2], lm.pointsRightX[lanePointNum - 1]));
+    newPoints.emplace_back(cv::Point2f(lm.pointsRightX[lanePointNum - 6], lm.pointsRightX[lanePointNum - 5]));
+    newPoints.emplace_back(cv::Point2f(lm.pointsLeftX[lanePointNum - 6], lm.pointsLeftX[lanePointNum - 5]));
+    laneMark.update(newPoints);
+    cv::Mat viewM = laneMark.getViewMatrix();
+    memcpy(glm::value_ptr(view), viewM.data, 16 * sizeof(float));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    std::cout << "viewM:\n" << viewM << std::endl;
+}
+
 cv::Mat camera_matrix, dist_coeffs;
 
 void readCameraPara() {
@@ -65,7 +94,6 @@ int main() {
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
-
     // glfw window creation
     // --------------------
     GLFWwindow *window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "AR Lane Marker", NULL, NULL);
@@ -261,10 +289,24 @@ int main() {
     readCameraPara();
     laneMark.setCamMatrix(camera_matrix);
     laneMark.setDistCoeff(dist_coeffs);
+    // create transformations
+    float viewArray[16] = {0.9997561, -0.004600341, -0.021601258, 0,
+                           0.0052788518, 0.9994911, 0.031459488, 0,
+                           0.021445541, -0.031565845, 0.99927157, 0,
+                           -0.55795634, -1.5917799, -6.1064529, 1};
+    glm::mat4 view = glm::make_mat4(viewArray);
+    glm::mat4 projection = glm::mat4(1.0f);
+
+    //projection = glm::perspective(glm::radians(45.0f), (float) SCR_WIDTH / (float) SCR_HEIGHT, 0.1f, 100.0f);
+    laneMark.setProjectMatrix();
+    cv::Mat projM = laneMark.getProjectMatrix();
+    memcpy(glm::value_ptr(projection), projM.data, 16 * sizeof(float));
 
     // render loop
     // -----------
     while (!glfwWindowShouldClose(window)) {
+        std::thread ldThread(ThreadProc1);
+        ldThread.join();
         // input
         // -----
         processInput(window);
@@ -308,14 +350,6 @@ int main() {
         //ldThread.join();
         LaneDetectionModule lm;
         lm.detectLane(frame, lanePointNum);
-        // create transformations
-        glm::mat4 view = glm::mat4(1.0f);
-        glm::mat4 projection = glm::mat4(1.0f);
-
-        view = glm::lookAt(glm::vec3(0.0f, 0.0f, 1.0f),
-                           glm::vec3(0.0f, 0.0f, 0.0f),
-                           glm::vec3(0.0f, 1.0f, 0.0f));
-        projection = glm::perspective(glm::radians(45.0f), (float) SCR_WIDTH / (float) SCR_HEIGHT, 0.1f, 100.0f);
         // retrieve the matrix uniform locations
 
         if (lm.pointsLeftX.size() > 0 && lm.pointsRightX.size() > 0) {
@@ -346,16 +380,17 @@ int main() {
             }
 
             //projection and view matrix
-            std::vector<cv::Point2f> newPoints = {};
-            newPoints.emplace_back(cv::Point2f(lm.pointsLeftX[lanePointNum - 2], lm.pointsLeftX[lanePointNum - 1]));
-            newPoints.emplace_back(cv::Point2f(lm.pointsRightX[lanePointNum - 2], lm.pointsRightX[lanePointNum - 1]));
-            newPoints.emplace_back(cv::Point2f(lm.pointsRightX[lanePointNum - 6], lm.pointsRightX[lanePointNum - 5]));
-            newPoints.emplace_back(cv::Point2f(lm.pointsLeftX[lanePointNum - 6], lm.pointsLeftX[lanePointNum - 5]));
-            laneMark.update(newPoints);
-            cv::Mat viewM = laneMark.getViewMatrix();
-            cv::Mat projM = laneMark.getProjectMatrix();
-            memcpy(glm::value_ptr(view), viewM.data, 16 * sizeof(float));
-            memcpy(glm::value_ptr(projection), projM.data, 16 * sizeof(float));
+//            std::vector<cv::Point2f> newPoints = {};
+//            newPoints.emplace_back(cv::Point2f(lm.pointsLeftX[lanePointNum - 2], lm.pointsLeftX[lanePointNum - 1]));
+//            newPoints.emplace_back(cv::Point2f(lm.pointsRightX[lanePointNum - 2], lm.pointsRightX[lanePointNum - 1]));
+//            newPoints.emplace_back(cv::Point2f(lm.pointsRightX[lanePointNum - 6], lm.pointsRightX[lanePointNum - 5]));
+//            newPoints.emplace_back(cv::Point2f(lm.pointsLeftX[lanePointNum - 6], lm.pointsLeftX[lanePointNum - 5]));
+//            laneMark.update(newPoints);
+//            cv::Mat viewM = laneMark.getViewMatrix();
+//            memcpy(glm::value_ptr(view), viewM.data, 16 * sizeof(float));
+//            std::cout << "viewM:\n" << viewM << std::endl;
+//            std::thread ldThread(updateViewMatrixThread,lm,laneMark,view);
+//            ldThread.join();
 
             // turn mark render
             // activate shader
@@ -365,9 +400,9 @@ int main() {
             turnShader.setMat4("projection", projection);
             // render container
             for (unsigned int j = 0; j < 5; j++) {
-                glm::vec3 transPos = glm::vec3(0.0f + 2.0f * j,
+                glm::vec3 transPos = glm::vec3(0.0f + turnRightXpos * j,
                                                3.0f,
-                                               -25.0f - 5.f * j);
+                                               turnRightZpos - 5.f * j);
                 glm::mat4 model = glm::mat4(1.0f); // make sure to initialize matrix to identity matrix first
                 //model = glm::scale(model, glm::vec3(2.f , 1.f, 1.f));
                 model = glm::translate(model, transPos);
@@ -446,11 +481,11 @@ int main() {
             model = glm::mat4(1.0f); // make sure to initialize matrix to identity matrix first
             model = glm::scale(model, glm::vec3(3.f, 1.5f, 3.f));
             model = glm::translate(model, transPos);
-            float turningDegree=(float) headingDegree * 90.0f / 40.0f;
-            if(turningDegree>90.0f  ){
-                turningDegree=90.0f;
-            }else if(turningDegree<-90.0f){
-                turningDegree=-90.0f;
+            float turningDegree = (float) headingDegree * 90.0f / 40.0f;
+            if (turningDegree > 90.0f) {
+                turningDegree = 90.0f;
+            } else if (turningDegree < -90.0f) {
+                turningDegree = -90.0f;
             }
             model = glm::rotate(model, glm::radians(turningDegree),
                                 glm::vec3(1.0f, 0.0f, 0.0f));

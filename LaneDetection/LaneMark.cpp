@@ -31,7 +31,7 @@ bool LaneMark::update(std::vector<cv::Point2f> p) {
 //        raux.convertTo(Rvec, CV_32F);   // 旋转向量
 //        taux.convertTo(Tvec, CV_32F);   // 平移向量
         culViewMatrix();
-        culProjectionMatrix();
+        //culProjectionMatrix();
     } catch (int e) {
         return false;
     }
@@ -96,6 +96,10 @@ void LaneMark::culProjectionMatrix() {
     projMatrix.at<float>(2, 3) = -1.0f;
 
     projMatrix.at<float>(3, 2) = -2.0f * farp * nearp / (farp - nearp);
+}
+
+void LaneMark::setProjectMatrix() {
+    culProjectionMatrix();
 }
 
 

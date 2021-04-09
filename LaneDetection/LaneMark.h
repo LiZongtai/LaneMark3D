@@ -11,10 +11,10 @@
 class LaneMark {
 public:
     LaneMark(int laneNum);
-
     bool update(std::vector<cv::Point2f> imgPoints);
     void setCamMatrix(cv::Mat);
     void setDistCoeff(cv::Mat);
+    void setProjectMatrix();
     cv::Mat getViewMatrix();
     cv::Mat getProjectMatrix();
 
